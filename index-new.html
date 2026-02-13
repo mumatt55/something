@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>vGTP 测试</title>
+  <style>
+    /* 全局样式设置 */
+    body {
+      margin: 0;
+      height: 100vh;           /* 页面高度占满整个视口 */
+      background: #000;        /* 黑色背景，科技感 */
+      color: #0f0;             /* 绿色文本，类似终端效果 */
+      font-family: "Microsoft YaHei", Arial, sans-serif; /* 支持中文 */
+      overflow: hidden;        /* 隐藏溢出，避免滚动条 */
+      display: flex;           /* 使用flex布局 */
+      flex-direction: column;  /* 垂直方向排列 */
+    }
+    
+    /* 头部控件区域样式 */
+    header {
+      padding: 12px 20px;       /* 内边距 */
+      background: #111;         /* 深灰色背景 */
+      display: flex;            /* 使用flex布局 */
+      gap: 24px;                /* 控件之间的间距 */
+      align-items: center;      /* 垂直居中对齐 */
+      flex-wrap: wrap;          /* 支持换行，适配小屏幕 */
+      border-bottom: 1px solid #222; /* 底部边框 */
+    }
+    
+    /* 标题样式 */
+    h2 { 
+      margin: 0;                /* 移除默认外边距 */
+      font-size: 1.4em;         /* 字体大小 */
+    }
+    
+    /* 标签样式 */
+    label { 
+      display: flex;            /* 使用flex布局 */
+      align-items: center;      /* 垂直居中对齐 */
+      gap: 8px;                 /* 元素之间的间距 */
+      color: #0f8;              /* 青绿色文本 */
+      white-space: nowrap;      /* 禁止文本换行 */
+    }
+    
+    /* 滑块控件样式 */
+    input[type="range"] { 
+      accent-color: #0f0;       /* 滑块颜色 */
+    }
+    
+    /* 按钮样式 */
+    button {
+      background: #222;         /* 按钮背景色 */
+      color: #0f0;              /* 按钮文本颜色 */
+      border: 1px solid #0f0;   /* 按钮边框 */
+      padding: 6px 14px;        /* 按钮内边距 */
+      cursor: pointer;          /* 鼠标悬停时显示指针 */
+      border-radius: 4px;       /* 按钮圆角 */
+    }
+    
+    /* 按钮悬停效果 */
+    button:hover { 
+      background: #0f0;         /* 悬停时背景色变为绿色 */
+      color: #000;              /* 悬停时文本色变为黑色 */
+    }
+    
+    /* 检测结果样式 */
+    #detected { 
+      color: #ff0;              /* 黄色文本，突出显示 */
+      font-weight: bold;        /* 加粗文本 */
+    }
+    
+    /* 画布样式 */
+    canvas { 
+      flex: 1;                  /* 占据剩余空间 */
+      image-rendering: pixelated; /* 像素化渲染，锐利边缘 */
+    }
+    
+    /* 信息提示样式 */
+    #info {
+      position: absolute;       /* 绝对定位 */
+      bottom: 12px;             /* 距离底部12px */
+      left: 20px;               /* 距离左侧20px */
+      background: rgba(0,0,0,0.7); /* 半透明黑色背景 */
+      padding: 8px 14px;        /* 内边距 */
+      border-radius: 4px;       /* 圆角 */
+      font-size: 0.95em;        /* 字体大小 */
+      pointer-events: none;     /* 禁用指针事件，不干扰下方元素 */
+    }
+  </style>
+</head>
+<body>
+
+<!-- 头部控件区域 -->
+<header>
+  <h2>UFO 运动测试 · 第一行 ≈ 当前显示器刷新率</h2>
+  
+  <!-- 行数控制 -->
+  <label>行数:
+    <input type="range" id="rows" min="1" max="6" value="3"/>
+    <span id="rowsValue">3</span>
+  </label>
+
+  <!-- 像素速度控制（支持负值，可反向移动） -->
+  <label>像素速度 (所有行相同):
+    <input type="range" id="pps" min="-3840" max="3840" step="60" value="480"/>
+    <span id="ppsValue">480</span> px/s
+  </label>
+
+  <!-- 背景网格控制 -->
+  <label>背景网格:
+    <input type="range" id="grid" min="30" max="120" step="10" value="40"/>
+    <span id="gridValue">60</span> px
+  </label>
+
+  <!-- 刷新率显示 -->
+  <div>估算刷新率: <span id="detected">检测中...</span> Hz</div>
+
+  <!-- 全屏按钮 -->
+  <button onclick="toggleFullscreen()">全屏</button>
+
+  <!-- 新增：当前分辨率显示 -->
+  <div style="margin-left: 20px; color: #ffcc00; font-weight: bold;">
+    分辨率: <span id="resolution">检测中...</span>
+  </div>
+</header>
+
+<!-- 画布元素 -->
+<canvas id="c"></canvas>
+
+<!-- 信息提示（已注释） -->
+<!--
+<div id="info">
+  第一行已尽量匹配你的显示器真实刷新率（通过 requestAnimationFrame 估算）<br>
+  后续行大致每行减半（例如 144 → 72 → 36 → 18 → 9 fps）<br>
+  低刷新率行会明显出现“跳帧 / 卡顿”，而非只是速度变慢
+</div>
+-->
+
+<script>
+// ================ 配置变量 ================
+const canvas = document.getElementById('c');           // 获取画布元素
+const ctx = canvas.getContext('2d', { alpha: false });  // 获取2D绘图上下文，禁用透明度
+
+let w = 0, h = 0;                      // 画布宽度和高度
+let numRows = 3;                       // 默认行数
+let pps = 480;                         // 默认像素速度（像素/秒）
+let gridSpacing = 60;                  // 默认网格间距
+
+let estimatedHz = null;                // 估算的显示器刷新率
+let fpsList = [];                      // 各行的帧率列表
+
+let positions = [];                    // 各行的位置数组
+let accumulators = [];                 // 各行的时间累加器
+let lastTime = 0;                      // 上一帧的时间戳
+
+const ufoWidth = 110;                  // UFO宽度
+const ufoHeight = 48;                  // UFO高度
+
+// ================ 估算显示器刷新率 ================
+/**
+ * 估算显示器刷新率
+ * 通过测量requestAnimationFrame的回调间隔来估算
+ * @param {Function} callback 估算完成后的回调函数
+ */
+function estimateRefreshRate(callback) {
+  const times = [];                    // 存储时间间隔
+  let prev = performance.now();        // 上一次测量的时间
+
+  /**
+   * 测量函数
+   * @param {number} now 当前时间戳
+   */
+  function measure(now) {
+    if (prev) {
+      const delta = now - prev;        // 计算时间间隔
+      if (delta > 0 && delta < 100) {  // 过滤异常值
+        times.push(delta);             // 存储有效的时间间隔
+      }
+    }
+    prev = now;                        // 更新上一次测量的时间
+
+    if (times.length < 80) {            // 测量80次
+      requestAnimationFrame(measure);  // 继续测量
+    } else {
+      // 排序取中位数，避免极端值干扰
+      times.sort((a,b)=>a-b);          // 对时间间隔排序
+      const mid = times[Math.floor(times.length / 2)];  // 取中位数
+      estimatedHz = Math.round(1000 / mid);            // 计算刷新率
+      if (estimatedHz < 30) estimatedHz = 60;           // 最低兜底60Hz
+      if (estimatedHz > 1000) estimatedHz = 240;        // 上限合理限制240Hz
+
+      document.getElementById('detected').textContent = estimatedHz + ' Hz';  // 显示估算结果
+      callback();  // 调用回调函数
+    }
+  }
+
+  requestAnimationFrame(measure);  // 开始测量
+}
+
+/**
+ * 生成帧率列表
+ * 第一行为估算的刷新率，后续行依次减半
+ */
+function generateFpsList() {
+  if (!estimatedHz) estimatedHz = 60;  // 如果未估算，使用默认60Hz
+
+  fpsList = [estimatedHz];             // 第一行为估算值
+  let current = estimatedHz;           // 当前帧率
+
+  for (let i = 1; i < numRows; i++) {
+    current = Math.max(2, Math.round(current / 2));  // 帧率减半，最低2Hz
+    fpsList.push(current);            // 添加到列表
+  }
+}
+
+
+
+// ================ 初始化函数 ================
+/**
+ * 调整画布大小
+ * 使画布大小与窗口大小一致
+ */
+function resize() {
+  w = canvas.width = window.innerWidth;    // 设置画布宽度为窗口宽度
+  h = canvas.height = window.innerHeight;  // 设置画布高度为窗口高度
+  initPositions();                         // 初始化位置
+}
+
+// ================ 分辨率显示 ================
+/**
+ * 更新分辨率显示
+ * 全屏模式下显示真实屏幕分辨率，非全屏模式下显示窗口大小
+ */
+function updateResolution() {
+  const resSpan = document.getElementById('resolution');
+  if (document.fullscreenElement) {
+    // 全屏模式下使用 screen 对象的真实分辨率（更准确）
+    resSpan.textContent = `${screen.width} × ${screen.height}`;
+  } else {
+    // 非全屏时显示窗口大小
+    resSpan.textContent = `${window.innerWidth} × ${window.innerHeight}`;
+  }
+}
+
+// 初始调用
+updateResolution();
+
+// 监听窗口大小变化
+window.addEventListener('resize', () => {
+  resize();           // 原有的 canvas resize
+  updateResolution(); // 新增：更新分辨率显示
+});
+
+// 全屏状态变化时也更新（因为全屏后分辨率可能不同）
+document.addEventListener('fullscreenchange', updateResolution);
+
+
+/**
+ * 初始化位置和累加器
+ */
+function initPositions() {
+  positions = [];       // 重置位置数组
+  accumulators = [];    // 重置累加器数组
+  for (let i = 0; i < numRows; i++) {
+    // 计算初始位置，避免重叠
+    positions.push( (w * 0.15) + (i * 80) % (w * 0.7) );
+    accumulators.push(0);  // 初始累加器为0
+  }
+}
+
+// 添加窗口大小改变事件监听器
+window.addEventListener('resize', resize);
+// 初始化画布大小
+resize();
+
+// 开始检测刷新率 → 检测完再生成 fpsList 并启动动画
+estimateRefreshRate(() => {
+  generateFpsList();    // 生成帧率列表
+  initPositions();      // 初始化位置
+  requestAnimationFrame(animate);  // 启动动画
+});
+
+// ================ 绘制函数 ================
+/**
+ * 绘制垂直网格
+ */
+function drawVerticalGrid() {
+  // 更明显的网格：加粗 + 更高亮度 + 轻微发光感（可选）
+  ctx.strokeStyle = '#AAAAAA';          // 中灰色，更可见
+  ctx.lineWidth = 2;                    // 线宽2px，更粗
+  const offset = positions[0] % gridSpacing || 0;  // 计算网格偏移量
+
+  // 绘制垂直线
+  for (let x = offset - gridSpacing; x < w; x += gridSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);      // 起点
+    ctx.lineTo(x, h);      // 终点
+    ctx.stroke();          // 绘制线条
+
+    // 可选：加一点发光/外发光效果（让网格在暗背景上更突出）
+     ctx.shadowColor = '#606060';  // 阴影颜色
+     ctx.shadowBlur = 8;           // 阴影模糊度
+     ctx.stroke();                 // 绘制带阴影的线条
+     ctx.shadowBlur = 0;           // 恢复默认，关闭阴影
+  }
+}
+
+/**
+ * 绘制行分隔线
+ * @param {number} y 分隔线的Y坐标
+ */
+function drawRowSeparator(y) {
+  ctx.strokeStyle = '#222';  // 深灰色
+  ctx.lineWidth = 2;         // 线宽2px
+  ctx.beginPath();
+  ctx.moveTo(0, y);           // 起点
+  ctx.lineTo(w, y);           // 终点
+  ctx.stroke();               // 绘制线条
+}
+
+/**
+ * 绘制vGTP文本（替代UFO）
+ * @param {number} x X坐标
+ * @param {number} y Y坐标
+ */
+function drawVGTP(x, y) {
+  ctx.save();                 // 保存当前绘图状态
+  ctx.translate(Math.round(x), Math.round(y));  // 平移到指定位置
+  ctx.textAlign = 'center';   // 文本水平居中
+  ctx.textBaseline = 'middle'; // 文本垂直居中
+  ctx.font = 'bold 80px "Arial Black", "Helvetica Black", sans-serif';  // 粗体无衬线字体
+
+  // 为了模仿彩虹 logo 的横向分色效果，我们分段绘制每个字母的不同颜色
+  const text = "vGTP";                         // 文本内容
+  const colors = ['#00CC00', '#FFFF00', '#FF0000', '#00CCFF'];  // 绿 → 黄 → 红 → 蓝（修改了颜色方案）
+
+  let offsetX = 0;                              // 字母偏移量
+  const letterWidths = [1, 1, 1, 1];            // 字母宽度比例
+
+  // 绘制每个字母
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];                       // 当前字母
+    const color = colors[i % colors.length];    // 当前字母颜色
+
+    ctx.fillStyle = color;                      // 设置填充颜色
+    ctx.fillText(char, offsetX, 0);             // 绘制字母
+
+    // 简单描边（模仿老 logo 的立体感）
+    /**
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 6;
+    ctx.strokeText(char, offsetX, 0);
+    
+    // 白色高光描边（增加立体感）
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(char, offsetX, 0);
+    **/
+    // 累加偏移（每个字母宽度不同）
+    offsetX += 60 * letterWidths[i];  // 基础间距 60px
+  }
+
+  // 可选：整体轻微阴影，增加复古感
+  /**
+  ctx.shadowColor = 'rgba(0,0,0,0.7)';
+  ctx.shadowBlur = 15;
+  ctx.shadowOffsetX = 8;
+  ctx.shadowOffsetY = 8;
+  **/
+  ctx.restore();  // 恢复之前的绘图状态
+}
+
+/**
+ * 绘制帧率标签
+ */
+function drawLabels() {
+  ctx.fillStyle = '#00ff88';                  // 青绿色文本
+  ctx.font = 'bold 42px "Microsoft YaHei"';  // 粗体字体
+  ctx.textAlign = 'left';                     // 文本左对齐
+  ctx.textBaseline = 'middle';                // 文本垂直居中
+
+  const rowHeight = h / numRows;              // 每行高度
+  for (let i = 0; i < numRows; i++) {
+    const y = (i + 0.5) * rowHeight;          // 当前行的Y坐标
+    const fps = fpsList[i] || 60;             // 当前行的帧率
+    const isFirst = i === 0;                  // 是否为第一行
+
+    ctx.fillStyle = isFirst ? '#ffff00' : '#00ff88';  // 第一行黄色，其他行青绿色
+    ctx.fillText(fps, 38, y - 12);            // 绘制帧率数值
+
+    ctx.font = 'bold 22px "Microsoft YaHei"';  // 较小字体
+    ctx.fillText('fps', 38, y + 26);          // 绘制"fps"文本
+
+    ctx.font = 'bold 42px "Microsoft YaHei"';  // 恢复大字体
+  }
+}
+
+// ================ 主循环 (修改后的部分) ================
+/**
+ * 动画主循环
+ * 处理动画的核心逻辑，包括时间计算、位置更新和绘制
+ * @param {number} time 当前时间戳，由requestAnimationFrame提供
+ */
+function animate(time) {
+  // 初始化lastTime（第一次执行时）
+  if (!lastTime) lastTime = time;
+  
+  // 计算时间差（秒），限制最大时间差为0.1秒（防止浏览器标签页切换回来时动画跳变）
+  const delta = Math.min((time - lastTime) / 1000, 0.1);
+  
+  // 更新lastTime为当前时间，用于下一帧计算
+  lastTime = time;
+
+  // 清空画布，使用深灰色背景
+  ctx.fillStyle = '#050505';
+  ctx.fillRect(0, 0, w, h);
+
+  // 绘制垂直网格
+  drawVerticalGrid();
+
+  // 计算每行的高度
+  const rowHeight = h / numRows;
+
+  // 处理每行的动画
+  for (let i = 0; i < numRows; i++) {
+    // 获取当前行的目标帧率，如果不存在则使用默认60Hz
+    const targetFps = fpsList[i] || 60;
+    
+    // 计算每帧的时间间隔（秒）
+    const frameInterval = 1 / targetFps;
+
+    // 累加时间差到当前行的累加器
+    accumulators[i] += delta;
+
+    // 当累加时间达到帧间隔时，更新位置
+    if (accumulators[i] >= frameInterval) {
+      // 计算需要更新的步数（可能大于1，处理时间间隔较大的情况）
+      const steps = Math.floor(accumulators[i] / frameInterval);
+      
+      // 更新位置：像素速度 * 每帧时间 * 步数
+      positions[i] += pps * frameInterval * steps;
+      
+      // 减去已处理的时间
+      accumulators[i] -= frameInterval * steps;
+
+      // 使用取模运算保持位置在 0 到 w 之间循环（更简洁的实现）
+      positions[i] %= w;
+    }
+
+    // 计算当前行的Y坐标（垂直居中）
+    const y = (i + 0.5) * rowHeight;
+    
+    // 获取当前行的X坐标
+    const x = positions[i];
+    
+    // 计算两个vGTP之间的间距（屏幕宽度的一半）
+    const gap = w / 2; // 2个vGTP等间距分布
+
+    // 每行绘制2个vGTP
+    for (let j = 0; j < 2; j++) {
+      // 计算当前 vGTP 的基础 X 坐标
+      let posX = (x + j * gap) % w;
+      
+      // 核心修改：不再做条件判断，而是每一时刻都绘制“三重影”
+      // 这样无论文本移动到哪个边缘，它的副本都会自动补全消失的部分
+      
+      // 1. 原始位置绘制
+      drawVGTP(posX, y);
+      
+      // 2. 左侧副本（处理从左边缘消失，从右边缘露出的情况）
+      drawVGTP(posX - w, y);
+      
+      // 3. 右侧副本（处理从右边缘消失，从左边缘露出的情况）
+      drawVGTP(posX + w, y);
+    }
+  }
+
+  // 绘制行分隔线
+  for (let i = 1; i < numRows; i++) {
+    drawRowSeparator(i * rowHeight);
+  }
+  
+  // 绘制帧率标签
+  drawLabels();
+
+  // 请求下一帧动画（递归调用）
+  requestAnimationFrame(animate);
+}
+
+// ================ 控件事件处理 ================
+/**
+ * 行数控件事件处理
+ */
+document.getElementById('rows').oninput = function() {
+  numRows = parseInt(this.value);                     // 获取行数
+  document.getElementById('rowsValue').textContent = numRows;  // 更新显示
+  generateFpsList();                                  // 重新生成帧率列表
+  initPositions();                                    // 重新初始化位置
+};
+
+/**
+ * 像素速度控件事件处理
+ * 支持负值，可实现反向移动
+ */
+document.getElementById('pps').oninput = function() {
+  pps = parseInt(this.value);                         // 获取像素速度
+  document.getElementById('ppsValue').textContent = pps;  // 更新显示
+};
+
+/**
+ * 背景网格控件事件处理
+ */
+document.getElementById('grid').oninput = function() {
+  gridSpacing = parseInt(this.value);                 // 获取网格间距
+  document.getElementById('gridValue').textContent = gridSpacing;  // 更新显示
+};
+
+/**
+ * 切换全屏模式
+ */
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    // 进入全屏
+    document.documentElement.requestFullscreen().catch(()=>{});
+  } else {
+    // 退出全屏
+    document.exitFullscreen();
+  }
+}
+
+/**
+ * 键盘事件处理
+ * 按空格键切换全屏
+ */
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();      // 阻止默认行为
+    toggleFullscreen();      // 切换全屏
+  }
+});
+</script>
+</body>
+</html>
