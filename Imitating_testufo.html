@@ -93,36 +93,31 @@
 
 <!-- 头部控件区域 -->
 <header>
-  <h2>UFO 运动测试 · 第一行 ≈ 当前显示器刷新率</h2>
-  
-  <!-- 行数控制 -->
-  <label>行数:
-    <input type="range" id="rows" min="1" max="6" value="3"/>
-    <span id="rowsValue">3</span>
-  </label>
+  <h2>帧率比较</h2>
 
-  <!-- 像素速度控制（支持负值，可反向移动） -->
-  <label>像素速度 (所有行相同):
-    <input type="range" id="pps" min="-3840" max="3840" step="60" value="480"/>
-    <span id="ppsValue">480</span> px/s
-  </label>
-
-  <!-- 背景网格控制 -->
-  <label>背景网格:
-    <input type="range" id="grid" min="30" max="120" step="10" value="40"/>
-    <span id="gridValue">60</span> px
-  </label>
-
-  <!-- 刷新率显示 -->
-  <div>估算刷新率: <span id="detected">检测中...</span> Hz</div>
-
-  <!-- 全屏按钮 -->
-  <button onclick="toggleFullscreen()">全屏</button>
-
-  <!-- 新增：当前分辨率显示 -->
-  <div style="margin-left: 20px; color: #ffcc00; font-weight: bold;">
-    分辨率: <span id="resolution">检测中...</span>
+  <div style="color: #00ff88; font-weight: bold; align-items: center;">
+    测试场景:
+    <select id="sceneSelect" style="background: #222; color: #0f0; border: 1px solid #0f0; padding: 4px;">
+      <option value="motion">帧率比较</option>
+      <option value="frameskip">跳帧测试</option>
+    </select>
   </div>
+
+  <div id="controls-motion" style="display: flex; gap: 20px; align-items: center;">
+    <label>行数: <input type="range" id="rows" min="1" max="6" value="3"/><span id="rowsValue">3</span></label>
+    <label>像素速度: <input type="range" id="pps" min="-3840" max="3840" step="60" value="480"/><span id="ppsValue">480</span> px/s</label>
+    <label>背景网格: <input type="range" id="grid" min="30" max="120" step="10" value="60"/><span id="gridValue">60</span> px</label>
+  </div>
+
+  <div id="controls-frameskip" style="display: none; gap: 20px; align-items: center;">
+    <label>列数 (X): <input type="range" id="skipCols" min="2" max="30" value="10"/><span id="skipColsValue">10</span></label>
+    <label>行数 (Y): <input type="range" id="skipRows" min="1" max="20" value="8"/><span id="skipRowsValue">8</span></label>
+    <label>方块亮度: <input type="range" id="boxBrightness" min="50" max="255" value="255"/><span id="brightValue">255</span></label>
+  </div>
+
+  <div style="color: #ffcc00;">分辨率: <span id="resolution">...</span></div>
+  <div>刷新率: <span id="detected">...</span> Hz</div>
+  <button onclick="toggleFullscreen()">全屏</button>
 </header>
 
 <!-- 画布元素 -->
@@ -156,6 +151,13 @@ let lastTime = 0;                      // 上一帧的时间戳
 
 const ufoWidth = 110;                  // UFO宽度
 const ufoHeight = 48;                  // UFO高度
+
+let currentScene = 'motion'; 
+let frameCount = 0;
+// 跳帧测试变量
+let skipCols = 10;
+let skipRows = 8;
+let boxBrightness = 255;
 
 // ================ 估算显示器刷新率 ================
 /**
@@ -283,6 +285,50 @@ estimateRefreshRate(() => {
 
 // ================ 绘制函数 ================
 /**
+ * 绘制跳帧测试场景
+ */
+function drawFrameSkipScene() {
+  const padding = 40; // 四周留白
+  const gap = 4;      // 格子间隙
+  
+  // 核心逻辑：计算单个格子的最大允许尺寸，确保不超出屏幕
+  // size = (可用总宽度 - 所有间隙) / 列数
+  const availableW = w - (padding * 2);
+  const availableH = h - (padding * 2);
+  const sizeX = (availableW - (skipCols - 1) * gap) / skipCols;
+  const sizeY = (availableH - (skipRows - 1) * gap) / skipRows;
+  
+  // 取长宽中较小的一个作为正方形边长
+  const size = Math.max(10, Math.min(sizeX, sizeY));
+
+  // 1. 绘制底色网格
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1;
+  for (let r = 0; r < skipRows; r++) {
+    for (let c = 0; c < skipCols; c++) {
+      ctx.strokeRect(padding + c * (size + gap), padding + r * (size + gap), size, size);
+    }
+  }
+
+  // 2. 逻辑更新：按显示器原生刷新率移动
+  frameCount++;
+  const totalCells = skipCols * skipRows;
+  const activeIndex = frameCount % totalCells;
+  const activeCol = activeIndex % skipCols;
+  const activeRow = Math.floor(activeIndex / skipCols);
+
+  // 3. 绘制移动的高亮方块
+  ctx.fillStyle = `rgb(${boxBrightness}, ${boxBrightness}, ${boxBrightness})`;
+  ctx.fillRect(padding + activeCol * (size + gap), padding + activeRow * (size + gap), size, size);
+
+  // 4. 底部提示文字
+  ctx.fillStyle = '#666';
+  ctx.font = '14px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`模式：每一格代表显示器的一帧渲染。当前设置：${skipCols}x${skipRows}`, padding, h - 15);
+}
+
+/**
  * 绘制垂直网格
  */
 function drawVerticalGrid() {
@@ -398,93 +444,123 @@ function drawLabels() {
 
 // ================ 主循环 (修改后的部分) ================
 /**
- * 动画主循环
- * 处理动画的核心逻辑，包括时间计算、位置更新和绘制
- * @param {number} time 当前时间戳，由requestAnimationFrame提供
+ * 核心动画主循环
+ * 整合了 vGTP 运动测试（场景一）与 跳帧测试（场景二）
+ * 修正了高行数下跳帧方格被遮挡的问题
  */
 function animate(time) {
-  // 初始化lastTime（第一次执行时）
   if (!lastTime) lastTime = time;
-  
-  // 计算时间差（秒），限制最大时间差为0.1秒（防止浏览器标签页切换回来时动画跳变）
   const delta = Math.min((time - lastTime) / 1000, 0.1);
-  
-  // 更新lastTime为当前时间，用于下一帧计算
   lastTime = time;
 
-  // 清空画布，使用深灰色背景
   ctx.fillStyle = '#050505';
   ctx.fillRect(0, 0, w, h);
 
-  // 绘制垂直网格
-  drawVerticalGrid();
+  if (currentScene === 'motion') {
+    // ==========================================
+    // 场景一：vGTP 运动测试
+    // ==========================================
+    drawVerticalGrid();
+    const rowHeight = h / numRows;
 
-  // 计算每行的高度
-  const rowHeight = h / numRows;
+    for (let i = 0; i < numRows; i++) {
+      const targetFps = fpsList[i] || 60;
+      const frameInterval = 1 / targetFps;
+      accumulators[i] += delta;
 
-  // 处理每行的动画
-  for (let i = 0; i < numRows; i++) {
-    // 获取当前行的目标帧率，如果不存在则使用默认60Hz
-    const targetFps = fpsList[i] || 60;
-    
-    // 计算每帧的时间间隔（秒）
-    const frameInterval = 1 / targetFps;
+      if (accumulators[i] >= frameInterval) {
+        const steps = Math.floor(accumulators[i] / frameInterval);
+        positions[i] += pps * frameInterval * steps;
+        accumulators[i] -= frameInterval * steps;
+        positions[i] %= w;
+      }
 
-    // 累加时间差到当前行的累加器
-    accumulators[i] += delta;
+      const y = (i + 0.5) * rowHeight;
+      const x = positions[i];
+      const gap = w / 3;
 
-    // 当累加时间达到帧间隔时，更新位置
-    if (accumulators[i] >= frameInterval) {
-      // 计算需要更新的步数（可能大于1，处理时间间隔较大的情况）
-      const steps = Math.floor(accumulators[i] / frameInterval);
-      
-      // 更新位置：像素速度 * 每帧时间 * 步数
-      positions[i] += pps * frameInterval * steps;
-      
-      // 减去已处理的时间
-      accumulators[i] -= frameInterval * steps;
-
-      // 使用取模运算保持位置在 0 到 w 之间循环（更简洁的实现）
-      positions[i] %= w;
+      for (let j = 0; j < 3; j++) {
+        let posX = (x + j * gap) % w;
+        drawVGTP(posX, y);
+        drawVGTP(posX - w, y);
+        drawVGTP(posX + w, y);
+      }
     }
 
-    // 计算当前行的Y坐标（垂直居中）
-    const y = (i + 0.5) * rowHeight;
-    
-    // 获取当前行的X坐标
-    const x = positions[i];
-    
-    // 计算两个vGTP之间的间距（屏幕宽度的一半）
-    const gap = w / 2; // 2个vGTP等间距分布
-
-    // 每行绘制2个vGTP
-    for (let j = 0; j < 2; j++) {
-      // 计算当前 vGTP 的基础 X 坐标
-      let posX = (x + j * gap) % w;
-      
-      // 核心修改：不再做条件判断，而是每一时刻都绘制“三重影”
-      // 这样无论文本移动到哪个边缘，它的副本都会自动补全消失的部分
-      
-      // 1. 原始位置绘制
-      drawVGTP(posX, y);
-      
-      // 2. 左侧副本（处理从左边缘消失，从右边缘露出的情况）
-      drawVGTP(posX - w, y);
-      
-      // 3. 右侧副本（处理从右边缘消失，从左边缘露出的情况）
-      drawVGTP(posX + w, y);
+    for (let i = 1; i < numRows; i++) {
+      drawRowSeparator(i * rowHeight);
     }
+    drawLabels();
+
+  } else if (currentScene === 'frameskip') {
+    // ==========================================
+    // 场景二：跳帧测试 (Frame Skipping) - 优化边距与对齐
+    // ==========================================
+    
+    const paddingX = 40;      // 左右边距
+    const topMargin = 40;     // 顶部预留高度
+    const bottomMargin = 80;  // 底部预留高度（确保不贴到底部且留出文字位）
+    const gap = 4;            // 方块间距
+    
+    // 1. 计算可用区域的尺寸
+    const availableW = w - (paddingX * 2);
+    const availableH = h - topMargin - bottomMargin; // 严格扣除底部空间
+
+    // 2. 根据行列数计算方块最大边长
+    const sizeX = (availableW - (skipCols - 1) * gap) / skipCols;
+    const sizeY = (availableH - (skipRows - 1) * gap) / skipRows;
+    const size = Math.max(5, Math.min(sizeX, sizeY));
+
+    // 3. 计算整体阵列的实际宽高，用于居中定位
+    const totalGridW = skipCols * size + (skipCols - 1) * gap;
+    const totalGridH = skipRows * size + (skipRows - 1) * gap;
+    
+    // 水平居中偏移
+    const offsetX = (w - totalGridW) / 2;
+    // 垂直居中偏移 (在顶部预留和底部预留之间的区域内居中)
+    const offsetY = topMargin + (availableH - totalGridH) / 2;
+
+    // 4. 绘制底色网格
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 1;
+    for (let r = 0; r < skipRows; r++) {
+      for (let c = 0; c < skipCols; c++) {
+        ctx.strokeRect(
+          offsetX + c * (size + gap), 
+          offsetY + r * (size + gap), 
+          size, 
+          size
+        );
+      }
+    }
+
+    // 5. 逻辑更新
+    frameCount++;
+    const totalCells = skipCols * skipRows;
+    const activeIndex = frameCount % totalCells;
+    const activeCol = activeIndex % skipCols;
+    const activeRow = Math.floor(activeIndex / skipCols);
+
+    // 6. 绘制当前活跃的高亮方块
+    ctx.fillStyle = `rgb(${boxBrightness}, ${boxBrightness}, ${boxBrightness})`;
+    ctx.fillRect(
+      offsetX + activeCol * (size + gap), 
+      offsetY + activeRow * (size + gap), 
+      size, 
+      size
+    );
+
+    // 7. 底部提示文字 (固定在底部预留区中央)
+    ctx.fillStyle = '#888';
+    ctx.font = '14px "Microsoft YaHei"';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      `模式：跳帧测试 | 布局：${skipCols}x${skipRows} | 每一格代表 1 帧渲染 | 请使用长曝光拍摄`, 
+      w / 2, 
+      h - 35
+    );
   }
 
-  // 绘制行分隔线
-  for (let i = 1; i < numRows; i++) {
-    drawRowSeparator(i * rowHeight);
-  }
-  
-  // 绘制帧率标签
-  drawLabels();
-
-  // 请求下一帧动画（递归调用）
   requestAnimationFrame(animate);
 }
 
@@ -517,6 +593,57 @@ document.getElementById('grid').oninput = function() {
 };
 
 /**
+ * 场景切换事件
+ */
+document.getElementById('sceneSelect').onchange = function() {
+  currentScene = this.value;
+  // 切换场景时重置一些状态
+  frameCount = 0;
+  initPositions();
+};
+
+document.getElementById('sceneSelect').onchange = function() {
+  currentScene = this.value;
+  const motionCtrl = document.getElementById('controls-motion');
+  const skipCtrl = document.getElementById('controls-frameskip');
+  const title = document.querySelector('h2');
+  
+  if (currentScene === 'motion') {
+    motionCtrl.style.display = 'flex';
+    skipCtrl.style.display = 'none';
+    title.textContent = '帧率比较';
+  } else {
+    motionCtrl.style.display = 'none';
+    skipCtrl.style.display = 'flex';
+    title.textContent = '跳帧测试';
+  }
+  frameCount = 0; // 切换时重置计数
+};
+
+
+document.getElementById('skipCols').oninput = function() {
+  skipCols = parseInt(this.value);
+  document.getElementById('skipColsValue').textContent = skipCols;
+};
+
+document.getElementById('skipRows').oninput = function() {
+  skipRows = parseInt(this.value);
+  document.getElementById('skipRowsValue').textContent = skipRows;
+};
+
+document.getElementById('boxBrightness').oninput = function() {
+  boxBrightness = parseInt(this.value);
+  document.getElementById('brightValue').textContent = boxBrightness;
+};
+
+
+document.getElementById('boxBrightness').oninput = function() {
+  boxBrightness = parseInt(this.value);
+  document.getElementById('brightValue').textContent = boxBrightness;
+};
+
+
+/**
  * 切换全屏模式
  */
 function toggleFullscreen() {
@@ -541,5 +668,4 @@ window.addEventListener('keydown', e => {
 });
 </script>
 </body>
-
 </html>
